@@ -1,3 +1,5 @@
+using System.Collections;
+using System.Linq;
 using System.Text.Json;
 
 namespace PepperX.QueryForge.Querying;
@@ -38,7 +40,9 @@ public static class ConditionSemantics
     /// <see cref="ConditionOperator.Equals"/> and <see cref="ConditionOperator.NotEquals"/>, where a
     /// null value is a deliberate IS NULL / IS NOT NULL test, and
     /// <see cref="ConditionOperator.Between"/>, which additionally requires
-    /// <see cref="Condition.ValueTo"/>.
+    /// <see cref="Condition.ValueTo"/>. Membership operators (<see cref="ConditionOperator.In"/> and
+    /// <see cref="ConditionOperator.NotIn"/>) require a non-null enumerable value with at least one
+    /// element — an empty set never matches.
     /// </remarks>
     public static bool IsExecutable(Condition condition)
     {
@@ -55,6 +59,9 @@ public static class ConditionSemantics
         if (condition.Operator is ConditionOperator.Equals or ConditionOperator.NotEquals)
             return true;
 
+        if (condition.Operator is ConditionOperator.In or ConditionOperator.NotIn)
+            return value is not null;  // empty enumerable is executable: IN [] → match nothing, NOT IN [] → match everything
+
         if (value is null)
             return false;
 
@@ -64,12 +71,28 @@ public static class ConditionSemantics
         return true;
     }
 
+    /// <summary>Whether <paramref name="value"/> is a non-empty enumerable.</summary>
+    private static bool IsNonEmptyEnumerable(object? value)
+    {
+        if (value is IEnumerable enumerable)
+        {
+            foreach (var _ in enumerable)
+                return true;
+            return false;
+        }
+
+        return false;
+    }
+
     /// <summary>Whether the operator performs a text match and therefore needs LIKE escaping.</summary>
     public static bool IsPatternOperator(ConditionOperator op) => op
         is ConditionOperator.Contains
         or ConditionOperator.NotContains
         or ConditionOperator.StartsWith
         or ConditionOperator.EndsWith;
+
+    /// <summary>Whether the operator matches a value against a set of candidates.</summary>
+    public static bool IsMembershipOperator(ConditionOperator op) => op is ConditionOperator.In or ConditionOperator.NotIn;
 
     /// <summary>
     /// Converts a value that arrived as JSON into a plain CLR value.
@@ -92,6 +115,9 @@ public static class ConditionSemantics
             JsonValueKind.True => true,
             JsonValueKind.False => false,
             JsonValueKind.Number => element.TryGetInt64(out var l) ? l : element.GetDouble(),
+            JsonValueKind.Array => element.EnumerateArray()
+                .Select(e => Unwrap(e)).ToList(),
+            JsonValueKind.Object => element.Deserialize<Dictionary<string, object?>>(),
             _ => element.GetRawText()
         };
     }
