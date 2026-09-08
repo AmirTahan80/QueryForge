@@ -340,6 +340,12 @@ public static class ExpressionCompiler
                     ? null
                     : Expression.AndAlso(lowerBound, upperBound);
 
+            case ConditionOperator.In:
+                return BuildMembership(member, property, condition, negate: false);
+
+            case ConditionOperator.NotIn:
+                return BuildMembership(member, property, condition, negate: true);
+
             case ConditionOperator.Contains:
                 return BuildLike(member, targetType, raw, StringContains, negate: false);
 
@@ -355,6 +361,67 @@ public static class ExpressionCompiler
             default:
                 return null;
         }
+    }
+
+    /// <summary>
+    /// Builds a membership predicate — IN or NOT IN — against a set of candidate values.
+    /// </summary>
+    private static Expression? BuildMembership(
+        MemberExpression member,
+        PropertyInfo property,
+        Condition condition,
+        bool negate)
+    {
+        var targetType = property.PropertyType;
+        var raw = ConditionSemantics.Unwrap(condition.Value);
+
+        if (raw is not IEnumerable enumerable)
+            return negate
+                ? Expression.NotEqual(member, Expression.Constant(null, targetType))
+                : Expression.Equal(member, Expression.Constant(null, targetType));
+
+        var elements = enumerable.Cast<object?>().Select(element =>
+        {
+            var unwrapped = ConditionSemantics.Unwrap(element);
+            if (!TryConvert(unwrapped, targetType, out var converted))
+                return null;
+
+            try
+            {
+                return Parameterize(converted, targetType);
+            }
+            catch (InvalidOperationException)
+            {
+                return null;
+            }
+        }).Where(e => e is not null).ToArray();
+
+        if (elements.Length == 0)
+            return negate ? Expression.Constant(true) : Expression.Constant(false);
+
+        var containsMethod = typeof(Enumerable).GetMethod(
+            nameof(Enumerable.Contains),
+            BindingFlags.Public | BindingFlags.Static,
+            binder: null,
+            types: [typeof(IEnumerable), typeof(object)],
+            modifiers: null)!;
+
+        // Build the closed Contains(IEnumerable, T) for the element type.
+        var closedContains = containsMethod.MakeGenericMethod(targetType);
+        var arrayConstant = Expression.Constant(elements);
+
+        Expression? body = Expression.Call(closedContains, arrayConstant, member);
+
+        if (negate)
+            body = Expression.Not(body);
+
+        // Null columns: for IN, no match (null not in any set); for NOT IN, null matches (null not in set).
+        // SQL: NULL IN (1,2,3) → unknown → false; NULL NOT IN (1,2,3) → unknown → false.
+        // But the EF Core provider's SQL-faithful stance is that a NULL column should not match either
+        // membership form — the row is excluded either way. Guard with IS NOT NULL.
+        return Expression.AndAlso(
+            Expression.NotEqual(member, Expression.Constant(null, targetType)),
+            body);
     }
 
     /// <summary>
@@ -395,6 +462,8 @@ public static class ExpressionCompiler
             ConditionOperator.GreaterThanOrEqualTo => ConditionOperator.LessThan,
             ConditionOperator.Contains => ConditionOperator.NotContains,
             ConditionOperator.NotContains => ConditionOperator.Contains,
+            ConditionOperator.In => ConditionOperator.NotIn,
+            ConditionOperator.NotIn => ConditionOperator.In,
             _ => condition.Operator
         };
 

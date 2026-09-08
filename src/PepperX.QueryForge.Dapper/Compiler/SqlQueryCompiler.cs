@@ -353,6 +353,12 @@ public sealed class SqlQueryCompiler(ISqlDialect dialect)
                 var upper = Coerce(condition.ValueTo, columnType);
                 return $"{column} BETWEEN {context.AddValue(value)} AND {context.AddValue(upper)}";
 
+            case ConditionOperator.In:
+                return BuildMembershipIn(column, value, context, negate: false);
+
+            case ConditionOperator.NotIn:
+                return BuildMembershipIn(column, value, context, negate: true);
+
             case ConditionOperator.Contains:
                 return Like(column, value, prefixWildcard: true, suffixWildcard: true, negate: false, context);
 
@@ -403,6 +409,28 @@ public sealed class SqlQueryCompiler(ISqlDialect dialect)
         var op = negate ? "NOT LIKE" : "LIKE";
 
         return $"{column} {op} {reference}{_dialect.LikeEscapeClause}";
+    }
+
+    /// <summary>
+    /// Builds a membership predicate — IN or NOT IN — against a set of candidate values.
+    /// </summary>
+    private string BuildMembershipIn(string column, object? value, CompilationContext context, bool negate)
+    {
+        if (value is not System.Collections.IEnumerable enumerable)
+            return negate ? $"{column} IS NOT NULL" : $"{column} IS NULL";
+
+        var references = new List<string>();
+        foreach (var element in enumerable)
+        {
+            var unwrapped = ConditionSemantics.Unwrap(element);
+            references.Add(context.AddValue(unwrapped));
+        }
+
+        if (references.Count == 0)
+            return negate ? "1 = 1" : "1 = 0";
+
+        var op = negate ? "NOT IN" : "IN";
+        return $"{column} {op} ({string.Join(", ", references)})";
     }
 
     #endregion
