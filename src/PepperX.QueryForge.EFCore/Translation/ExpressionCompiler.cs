@@ -34,6 +34,10 @@ public static class ExpressionCompiler
     private static readonly MethodInfo StringEndsWith =
         typeof(string).GetMethod(nameof(string.EndsWith), [typeof(string)])!;
 
+    private static readonly MethodInfo EnumerableContains =
+        typeof(Enumerable).GetMethods(BindingFlags.Public | BindingFlags.Static)
+            .First(m => m.Name == nameof(Enumerable.Contains) && m.GetParameters().Length == 2);
+
     /// <summary>
     /// Builds the predicate for a <see cref="QueryCriteria"/>, or <see langword="null"/> when
     /// nothing usable remains after unknown columns and unfilled values are dropped.
@@ -375,42 +379,33 @@ public static class ExpressionCompiler
         var targetType = property.PropertyType;
         var raw = ConditionSemantics.Unwrap(condition.Value);
 
-        if (raw is not IEnumerable enumerable)
+        if (raw is not IEnumerable enumerable || raw is string)
             return negate
-                ? Expression.NotEqual(member, Expression.Constant(null, targetType))
-                : Expression.Equal(member, Expression.Constant(null, targetType));
+                ? (IsNullable(targetType) ? Expression.NotEqual(member, Expression.Constant(null, targetType)) : Expression.Constant(true))
+                : Expression.Constant(false);
 
-        var elements = enumerable.Cast<object?>().Select(element =>
+        var listType = typeof(List<>).MakeGenericType(targetType);
+        var list = (IList)Activator.CreateInstance(listType)!;
+
+        foreach (var element in enumerable)
         {
             var unwrapped = ConditionSemantics.Unwrap(element);
-            if (!TryConvert(unwrapped, targetType, out var converted))
-                return null;
+            if (unwrapped is null)
+                continue;
 
-            try
+            if (TryConvert(unwrapped, targetType, out var converted) && converted is not null)
             {
-                return Parameterize(converted, targetType);
+                list.Add(converted);
             }
-            catch (InvalidOperationException)
-            {
-                return null;
-            }
-        }).Where(e => e is not null).ToArray();
+        }
 
-        if (elements.Length == 0)
+        if (list.Count == 0)
             return negate ? Expression.Constant(true) : Expression.Constant(false);
 
-        var containsMethod = typeof(Enumerable).GetMethod(
-            nameof(Enumerable.Contains),
-            BindingFlags.Public | BindingFlags.Static,
-            binder: null,
-            types: [typeof(IEnumerable), typeof(object)],
-            modifiers: null)!;
+        var closedContains = EnumerableContains.MakeGenericMethod(targetType);
+        var sourceExpr = Parameterize(list, listType);
 
-        // Build the closed Contains(IEnumerable, T) for the element type.
-        var closedContains = containsMethod.MakeGenericMethod(targetType);
-        var arrayConstant = Expression.Constant(elements);
-
-        Expression? body = Expression.Call(closedContains, arrayConstant, member);
+        Expression body = Expression.Call(closedContains, sourceExpr, member);
 
         if (negate)
             body = Expression.Not(body);
@@ -418,10 +413,10 @@ public static class ExpressionCompiler
         // Null columns: for IN, no match (null not in any set); for NOT IN, null matches (null not in set).
         // SQL: NULL IN (1,2,3) → unknown → false; NULL NOT IN (1,2,3) → unknown → false.
         // But the EF Core provider's SQL-faithful stance is that a NULL column should not match either
-        // membership form — the row is excluded either way. Guard with IS NOT NULL.
-        return Expression.AndAlso(
-            Expression.NotEqual(member, Expression.Constant(null, targetType)),
-            body);
+        // membership form — the row is excluded either way. Guard with IS NOT NULL if nullable.
+        return IsNullable(targetType)
+            ? Expression.AndAlso(Expression.NotEqual(member, Expression.Constant(null, targetType)), body)
+            : body;
     }
 
     /// <summary>

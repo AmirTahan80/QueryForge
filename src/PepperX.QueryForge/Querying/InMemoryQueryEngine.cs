@@ -265,7 +265,11 @@ public static class InMemoryQueryEngine
                 bool foundIn = false;
                 foreach (var candidate in enumerable)
                 {
-                    if (QueryValueComparer.Instance.AreEqual(actual, candidate))
+                    var unwrappedCandidate = ConditionSemantics.Unwrap(candidate);
+                    if (unwrappedCandidate is null)
+                        continue;
+
+                    if (QueryValueComparer.Instance.AreEqual(actual, unwrappedCandidate))
                     {
                         foundIn = true;
                         break;
@@ -281,7 +285,11 @@ public static class InMemoryQueryEngine
                 bool foundInNot = false;
                 foreach (var candidate in notInEnumerable)
                 {
-                    if (QueryValueComparer.Instance.AreEqual(actual, candidate))
+                    var unwrappedCandidate = ConditionSemantics.Unwrap(candidate);
+                    if (unwrappedCandidate is null)
+                        continue;
+
+                    if (QueryValueComparer.Instance.AreEqual(actual, unwrappedCandidate))
                     {
                         foundInNot = true;
                         break;

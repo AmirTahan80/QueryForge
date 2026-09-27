@@ -327,6 +327,13 @@ public sealed class SqlQueryCompiler(ISqlDialect dialect)
     {
         var column = _dialect.QuoteIdentifier(condition.ColumnName);
         var columnType = columns.TypeOf(condition.ColumnName);
+
+        if (condition.Operator is ConditionOperator.In)
+            return BuildMembershipIn(column, condition.Value, columnType, context, negate: false);
+
+        if (condition.Operator is ConditionOperator.NotIn)
+            return BuildMembershipIn(column, condition.Value, columnType, context, negate: true);
+
         var value = Coerce(condition.Value, columnType);
 
         switch (condition.Operator)
@@ -352,12 +359,6 @@ public sealed class SqlQueryCompiler(ISqlDialect dialect)
             case ConditionOperator.Between:
                 var upper = Coerce(condition.ValueTo, columnType);
                 return $"{column} BETWEEN {context.AddValue(value)} AND {context.AddValue(upper)}";
-
-            case ConditionOperator.In:
-                return BuildMembershipIn(column, value, context, negate: false);
-
-            case ConditionOperator.NotIn:
-                return BuildMembershipIn(column, value, context, negate: true);
 
             case ConditionOperator.Contains:
                 return Like(column, value, prefixWildcard: true, suffixWildcard: true, negate: false, context);
@@ -414,16 +415,21 @@ public sealed class SqlQueryCompiler(ISqlDialect dialect)
     /// <summary>
     /// Builds a membership predicate — IN or NOT IN — against a set of candidate values.
     /// </summary>
-    private string BuildMembershipIn(string column, object? value, CompilationContext context, bool negate)
+    private string BuildMembershipIn(string column, object? value, Type? columnType, CompilationContext context, bool negate)
     {
-        if (value is not System.Collections.IEnumerable enumerable)
+        var unwrappedValue = ConditionSemantics.Unwrap(value);
+        if (unwrappedValue is not System.Collections.IEnumerable enumerable || unwrappedValue is string)
             return negate ? $"{column} IS NOT NULL" : $"{column} IS NULL";
 
         var references = new List<string>();
         foreach (var element in enumerable)
         {
             var unwrapped = ConditionSemantics.Unwrap(element);
-            references.Add(context.AddValue(unwrapped));
+            if (unwrapped is null)
+                continue;
+
+            var coerced = Coerce(unwrapped, columnType);
+            references.Add(context.AddValue(coerced));
         }
 
         if (references.Count == 0)

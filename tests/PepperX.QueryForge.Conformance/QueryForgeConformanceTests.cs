@@ -674,10 +674,11 @@ public abstract class QueryForgeConformanceTests
         var ids = await IdsAsync(new Query
         {
             Criteria = Group(new Condition("Quantity", ConditionOperator.In, new object?[] { 5, "9", 12 })),
+            SortColumns = [new SortDescriptor("Id")],
             Paging = AllRows
         });
 
-        ids.Should().Equal(10);
+        ids.Should().Equal(1, 9, 10);
     }
 
     #endregion

@@ -41,8 +41,8 @@ public static class ConditionSemantics
     /// null value is a deliberate IS NULL / IS NOT NULL test, and
     /// <see cref="ConditionOperator.Between"/>, which additionally requires
     /// <see cref="Condition.ValueTo"/>. Membership operators (<see cref="ConditionOperator.In"/> and
-    /// <see cref="ConditionOperator.NotIn"/>) require a non-null enumerable value with at least one
-    /// element — an empty set never matches.
+    /// <see cref="ConditionOperator.NotIn"/>) require a non-null value — an empty set matches
+    /// nothing for In, and everything for NotIn.
     /// </remarks>
     public static bool IsExecutable(Condition condition)
     {
@@ -69,19 +69,6 @@ public static class ConditionSemantics
             return Unwrap(condition.ValueTo) is not null;
 
         return true;
-    }
-
-    /// <summary>Whether <paramref name="value"/> is a non-empty enumerable.</summary>
-    private static bool IsNonEmptyEnumerable(object? value)
-    {
-        if (value is IEnumerable enumerable)
-        {
-            foreach (var _ in enumerable)
-                return true;
-            return false;
-        }
-
-        return false;
     }
 
     /// <summary>Whether the operator performs a text match and therefore needs LIKE escaping.</summary>
