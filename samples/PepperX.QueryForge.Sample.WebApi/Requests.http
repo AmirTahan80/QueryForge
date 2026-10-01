@@ -192,6 +192,48 @@ Content-Type: application/json
 
 ###
 
+# 8a. IS NULL using ConditionOperator.IsNull (11) — explicit unary null check.
+POST {{baseUrl}}/api/users/filters/null-checks
+Content-Type: application/json
+
+{
+  "criteria": {
+    "logic": 0,
+    "groups": [
+      {
+        "logic": 0,
+        "conditions": [
+          { "columnName": "DeletedAt", "operator": 11 }
+        ]
+      }
+    ]
+  },
+  "paging": { "size": 20, "number": 1 }
+}
+
+###
+
+# 9a. IS NOT NULL using ConditionOperator.IsNotNull (12) — explicit unary non-null check.
+POST {{baseUrl}}/api/users/filters/null-checks
+Content-Type: application/json
+
+{
+  "criteria": {
+    "logic": 0,
+    "groups": [
+      {
+        "logic": 0,
+        "conditions": [
+          { "columnName": "DeletedAt", "operator": 12 }
+        ]
+      }
+    ]
+  },
+  "paging": { "size": 20, "number": 1 }
+}
+
+###
+
 # 10. Between — inclusive at both ends. Needs both value and valueTo.
 POST {{baseUrl}}/api/users/filters/range
 Content-Type: application/json
